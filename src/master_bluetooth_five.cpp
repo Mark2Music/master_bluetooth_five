@@ -519,7 +519,7 @@ int main(int argc, char **argv)
 	
 	//serialport initialize
 	//need have a special device name according the ID
-	serialport.fd = open("/dev/ttyUSB0", O_RDWR);  
+	serialport.fd = open("/dev/blueteethserial0", O_RDWR);  
 	if(serialport.fd == -1)  
 	{  
 		perror("set serialport error\n");  
