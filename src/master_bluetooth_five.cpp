@@ -153,7 +153,7 @@ bool SerialPort::Set_Parity(int fd,int databits,int stopbits,int parity)
      * 否则一直等待, 上面注释里面的方式是正确的
      */
     options.c_cc[VTIME] = 150;
-    options.c_cc[VMIN] = 5;
+    options.c_cc[VMIN] = 0;
     if (tcsetattr(fd,TCSANOW,&options) != 0)     
     {   
         perror("SetupSerial failed!\n");     
@@ -530,17 +530,18 @@ int main(int argc, char **argv)
 		printf(" succesfully\n");  
 	}  
 	//set the parameters of serialport  
-	//serialport.Set_Speed(serialport.fd, 115200);
-	//if (serialport.Set_Parity(serialport.fd, 8, 1, 'S') == true)  
-	//{  
+	serialport.Set_Speed(serialport.fd, 115200);
+	if (serialport.Set_Parity(serialport.fd, 8, 1, 'S') == true)  
+	{  
 		//printf("Set Parity Error\n");  
 		//exit (0);
-	//	printf("set data format succesfully!\n");  
-	//}
-	//else
-	//{
-	//	printf("set data format failed!\n");
-	//}
+		printf("set data format succesfully!\n");  
+	}
+	else
+	{
+		printf("set data format failed!\n");
+		exit(-1);
+	}
 	
 	/*
 	//将文件描述符加入读描述符集合
@@ -557,7 +558,8 @@ int main(int argc, char **argv)
     */
     
     //等待蓝牙连接成功
-    sleep(5);
+    //this is a temp program.
+    //sleep(5);
     //callback function
 	ros::Subscriber sub = n.subscribe("/door_enabler", 5, MessageCallBack);
 	
