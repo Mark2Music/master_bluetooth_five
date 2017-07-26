@@ -233,13 +233,16 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 		}
 
 		//每次完成开门动作之后，检测蓝牙是否还处于连接状态
+	if (serialport.count == 0)
+	{
 		usleep(10000);
 		tcflush(serialport.fd, TCIOFLUSH);
 	    time.tv_sec = 0;
 		time.tv_usec = 80000; //100ms, because the callback hz is 10
-		ret = system("echo 'AT+STATE?\r' >> /dev/blueteethserial0");
+		//ret = system("echo 'AT+STATE?\r' >> /dev/blueteethserial0");
 		/*实现串口异步I/O*/
-		ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+		//ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+		ret = write(serialport.fd, "AT+STATE?\r", 10);
 		if (ret < 0)
 		{
 			perror("select");
@@ -278,6 +281,7 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 			tcflush(serialport.fd, TCIOFLUSH);
 		}
 	}
+     }
 		
 }
 
