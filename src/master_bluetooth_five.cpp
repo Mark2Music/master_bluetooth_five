@@ -208,8 +208,8 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 			//serialport.send_buffer[1] = '\0';	
 			serialport.count = 0;
 			//send 1 to the blueteeth module
-			//write(serialport.fd, &serialport.send_buffer[0], 1);
-			ret = system("echo '1' >> /dev/blueteethserial0");
+			ret = write(serialport.fd, "1\r", 2);
+			//ret = system("echo '1\r' >> /dev/blueteethserial0");
 			std::cout<<"data == 1, should open the door!\n"<<std::endl;
 			//serialport.count++;
 			serialport.already_open_flag = true;
@@ -226,8 +226,8 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 			  //serialport.itoa(0, &serialport.send_buffer[0], 10);	
 			  //serialport.send_buffer[1] = '\0';	
 			  //send 0 flag to module
-			  //write(serialport.fd, &serialport.send_buffer[0], 1);	
-			  ret = system("echo '0' >> /dev/blueteethserial0");
+			  ret = write(serialport.fd, "0\r", 2);	
+			  //ret = system("echo '0\r' >> /dev/blueteethserial0");
 			  serialport.already_open_flag = false;
 			}
 		}
