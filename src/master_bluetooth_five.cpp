@@ -198,6 +198,7 @@ void SerialPort::Set_Speed(int fd, int speed)
 
 void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 {
+	std::cout<<"this is a test!!!"<<std::endl;
 	int ret = -1;
 	struct timeval time;
 	if (serialport.blueteeth_connect_status == true)
@@ -208,7 +209,7 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 			//serialport.send_buffer[1] = '\0';	
 			serialport.count = 0;
 			//send 1 to the blueteeth module
-			ret = write(serialport.fd, "1\r", 2);
+			ret = write(serialport.fd, "1", 1);
 			//ret = system("echo '1\r' >> /dev/blueteethserial0");
 			std::cout<<"data == 1, should open the door!\n"<<std::endl;
 			//serialport.count++;
@@ -226,7 +227,7 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 			  //serialport.itoa(0, &serialport.send_buffer[0], 10);	
 			  //serialport.send_buffer[1] = '\0';	
 			  //send 0 flag to module
-			  ret = write(serialport.fd, "0\r", 2);	
+			  ret = write(serialport.fd, "0", 1);	
 			  //ret = system("echo '0\r' >> /dev/blueteethserial0");
 			  serialport.already_open_flag = false;
 			}
@@ -240,9 +241,8 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 	    time.tv_sec = 0;
 		time.tv_usec = 80000; //100ms, because the callback hz is 10
 		//ret = system("echo 'AT+STATE?\r' >> /dev/blueteethserial0");
-		/*实现串口异步I/O*/
-		//ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
 		ret = write(serialport.fd, "AT+STATE?\r", 10);
+		ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
 		if (ret < 0)
 		{
 			perror("select");
@@ -257,18 +257,17 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 		{
 			//printf("......in blueteeth query connect status......");
 			//std::cout<<std::endl;
-			ret = read(serialport.fd, &serialport.send_buffer[171], 13);
+			ret = read(serialport.fd, &serialport.send_buffer[171], 9);
 			//print the string
 			//printf("ret = %d, %s\n", ret, &serialport.send_buffer[171]);
 			//std::cout<<std::endl;
 			
 			if ( strncmp(&serialport.send_buffer[171], "CONNECTED", 9) == 0)
 			{
-					//printf("in callback, status: still connect!\n");
-					//std::cout<<std::endl;
+					std::cout<<"status: still connect!\n"<<std::endl;
 					serialport.blueteeth_connect_status = true;
 			}
-			else if ( strncmp(&serialport.send_buffer[171], "DISCONNECTED", 12) == 0)
+			else if ( strncmp(&serialport.send_buffer[171], "DISCONNEC", 9) == 0)
 			{
 				    pthread_mutex_lock(&mutex);
 					//do something or not
@@ -278,7 +277,7 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 					pthread_mutex_unlock(&mutex);
 			}
 			//clear the io buffer
-			tcflush(serialport.fd, TCIOFLUSH);
+			//tcflush(serialport.fd, TCIOFLUSH);
 		}
 	}
      }
@@ -521,7 +520,7 @@ void *thread(void *arg)
             tcflush(serialport.fd, TCIOFLUSH);
 
 			//connect slave device
-			time.tv_sec = 15;
+			time.tv_sec = 10;
 			time.tv_usec = 0;
 			char dest[24] = "AT+CONNECT=";
 			char src[12];
@@ -601,7 +600,7 @@ int main(int argc, char **argv)
 	
 	serialport.already_open_flag = false;
 	serialport.fd = -1;
-	serialport.send_buffer[100] = {0};
+	serialport.send_buffer[200] = {0};
 	serialport.send_buffer[0] = -1;
 	serialport.blueteeth_connect_status = false;
 	
