@@ -20,7 +20,7 @@ class SerialPort
 		void Set_Speed(int fd, int speed);
 		//receive the cmd and deal it
 		char* itoa(int num, char*str, int radix);
-        //create two static variables   
+		//create two static variables   
 		static int speed_arr[];	
 		static int name_arr[];
 		//some useful variables
@@ -29,10 +29,15 @@ class SerialPort
 		char send_buffer[200];//连接设备时，每个步骤分配三个字节
 		int count;
 		bool blueteeth_connect_status; // true is connected, false is unconnected
+		//线程休眠唤醒
+		
 };
 
 SerialPort serialport;
 fd_set rfds;
+static pthread_cond_t cond;
+static pthread_mutex_t mutex;
+unsigned short query_count = 0;
 
 int SerialPort::speed_arr[] = {B115200, B38400, B19200, B9600, B4800, B2400, B1200, B300};
 int SerialPort::name_arr[] = {115200, 38400, 19200, 9600, 4800, 2400, 1200, 300};
@@ -152,8 +157,8 @@ bool SerialPort::Set_Parity(int fd,int databits,int stopbits,int parity)
     /* 这样设置表示read函数只有在读取一个字节后才能返回
      * 否则一直等待, 上面注释里面的方式是正确的
      */
-    options.c_cc[VTIME] = 150;
-    options.c_cc[VMIN] = 0;
+    options.c_cc[VTIME] = 100;
+    options.c_cc[VMIN] = 30;
     if (tcsetattr(fd,TCSANOW,&options) != 0)     
     {   
         perror("SetupSerial failed!\n");     
@@ -179,14 +184,15 @@ void SerialPort::Set_Speed(int fd, int speed)
       status = tcsetattr(fd, TCSANOW, &Opt);    
       if  (status != 0) 
 	  	{          
-          perror("tcsetattr ttyUSB0");    
+          perror("tcsetattr error");    
           return;       
         }      
       tcflush(fd, TCIOFLUSH);
 	  printf(" set serial 115200...\n");
 	  
 	  return;
-    }    } 
+    }    
+  } 
   
 }
 
@@ -197,16 +203,14 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 	if (serialport.blueteeth_connect_status == true)
 	{
 		if (toggle_msg.data == 1 && serialport.already_open_flag == false /*&& serialport.blueteeth_connect_status == true*/) // 1: open the door 0: close the door
-		{
-			printf("in data = 1, should open the door!\n");
-			std::cout<<std::endl;
-			
-			serialport.itoa(1, &serialport.send_buffer[0], 10);	
-			serialport.send_buffer[1] = '\0';	
+		{		
+			//serialport.itoa(1, &serialport.send_buffer[0], 10);	
+			//serialport.send_buffer[1] = '\0';	
 			serialport.count = 0;
 			//send 1 to the blueteeth module
 			//write(serialport.fd, &serialport.send_buffer[0], 1);
 			ret = system("echo '1' >> /dev/blueteethserial0");
+			std::cout<<"data == 1, should open the door!\n"<<std::endl;
 			//serialport.count++;
 			serialport.already_open_flag = true;
 		}
@@ -219,64 +223,64 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 			serialport.count = 0;
 			if (serialport.already_open_flag == true)
 			{
-			  serialport.itoa(0, &serialport.send_buffer[0], 10);	
-			  serialport.send_buffer[1] = '\0';	
+			  //serialport.itoa(0, &serialport.send_buffer[0], 10);	
+			  //serialport.send_buffer[1] = '\0';	
 			  //send 0 flag to module
 			  //write(serialport.fd, &serialport.send_buffer[0], 1);	
 			  ret = system("echo '0' >> /dev/blueteethserial0");
 			  serialport.already_open_flag = false;
 			}
 		}
+
+		//每次完成开门动作之后，检测蓝牙是否还处于连接状态
+		usleep(10000);
+		tcflush(serialport.fd, TCIOFLUSH);
+	    time.tv_sec = 0;
+		time.tv_usec = 80000; //100ms, because the callback hz is 10
+		ret = system("echo 'AT+STATE?\r' >> /dev/blueteethserial0");
+		/*实现串口异步I/O*/
+		ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+		if (ret < 0)
+		{
+			perror("select");
+			return;
+		}
+		else if ( ret == 0 )
+		{
+			std::cout<<"in callback, getstat timeout!\n"<<std::endl;
+			return;
+		}
+		else
+		{
+			//printf("......in blueteeth query connect status......");
+			//std::cout<<std::endl;
+			ret = read(serialport.fd, &serialport.send_buffer[171], 13);
+			//print the string
+			//printf("ret = %d, %s\n", ret, &serialport.send_buffer[171]);
+			//std::cout<<std::endl;
+			
+			if ( strncmp(&serialport.send_buffer[171], "CONNECTED", 9) == 0)
+			{
+					//printf("in callback, status: still connect!\n");
+					//std::cout<<std::endl;
+					serialport.blueteeth_connect_status = true;
+			}
+			else if ( strncmp(&serialport.send_buffer[171], "DISCONNECTED", 12) == 0)
+			{
+				    pthread_mutex_lock(&mutex);
+					//do something or not
+					serialport.blueteeth_connect_status = false;
+					std::cout<<"has lost connect to the slave device!\n"<<std::endl;
+					pthread_cond_signal(&cond);
+					pthread_mutex_unlock(&mutex);
+			}
+			//clear the io buffer
+			tcflush(serialport.fd, TCIOFLUSH);
+		}
 	}
-	/*
-	//每次完成开门动作之后，检测蓝牙是否还处于连接状态
-	usleep(10000);
-	tcflush(serialport.fd, TCIOFLUSH);
-        time.tv_sec = 0;
-	time.tv_usec = 80000; //100ms, because the callback hz is 10
-	ret = system("echo 'AT+GETSTAT\r' >> /dev/blueteethserial0");
-	//实现串口异步I/O
-	ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
-	if (ret < 0)
-	{
-		perror("select");
-		return;
-	}
-	else if ( ret == 0 )
-	{
-		std::cout<<"timeout!\n"<<std::endl;
-		return;
-	}
-	else
-	{
-		printf("......in blueteeth query connect status......");
-		std::cout<<std::endl;
-		ret = read(serialport.fd, &serialport.send_buffer[171], 10);
-		//print the string
-		printf("ret = %d, %s\n", ret, &serialport.send_buffer[171]);
-		std::cout<<std::endl;
 		
-		if ( strncmp(&serialport.send_buffer[171+ret-1], "1", 1) == 0)
-		{
-				printf("status: still connect!\n");
-				std::cout<<std::endl;
-				serialport.blueteeth_connect_status = true;
-		}
-		else if ( strncmp(&serialport.send_buffer[171+ret-1], "0", 1) == 0)
-		{
-			        pthread_mutex_lock(&mutex);
-				//do something or not
-				serialport.blueteeth_connect_status = false;
-				printf("has lost connect to the slave device!\n");
-				std::cout<<std::endl;
-				pthread_cond_signal(&cond);
-				pthread_mutex_unlock(&mutex);
-		}
-	}
-	*/
 }
 
-/*
 void *thread(void *arg)  
 {  
 	int ret;
@@ -285,36 +289,249 @@ void *thread(void *arg)
 	//serialport.blueteeth_connect_status = false;
 	while(1)
 	{
-		//发送命令确定模块是否已经连接上，返回１表示连接上了，返回０表示没有连接上
-		
 		if (serialport.blueteeth_connect_status == false)
 		{
 			printf("......in blueteeth connect start......");
 			std::cout<<std::endl;
-			bool already_set_unconnect_ok = false;
-			bool already_set_name_ok = false;
-			bool already_set_master_ok = false;
-			//只要有数据返回，就说明成功
-			bool already_set_searchdev_ok = false;
-			//等待次数
-			int current_count = 0;
-			//确保断开，发断开指令
-			char unconnect_cmd[] = "AT+DISC";
-			unconnect_cmd[strlen(unconnect_cmd)] = '\n';
-			//unconnect_cmd[strlen(unconnect_cmd)] = '\r';
-			//unconnect_cmd[strlen(unconnect_cmd)+1] = '\n';
+			usleep(500000);
+			//query the status
+			tcflush(serialport.fd, TCIOFLUSH);
+			time.tv_sec = 2;
+			time.tv_usec = 0; 
+			//ret = system("echo 'AT+STATE?\r' >> /dev/blueteethserial0");
+			ret = write(serialport.fd, "AT+STATE?\r", 10);
+			//get the info from the module
+			ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+			if (ret < 0)
+			{
+				perror("select");
+				continue;
+			}
+			else if( ret == 0 )
+			{
+				std::cout<<"getstat timeout!\n"<<std::endl;
+				continue;
+			}
+			else
+			{
+				printf("......in blueteeth query connect status......");
+				std::cout<<std::endl;
+				ret = read(serialport.fd, &serialport.send_buffer[151], 10);
+				//print the string
+				printf("ret = %d, %s\n", ret, &serialport.send_buffer[151]);
+				std::cout<<std::endl;
+				
+				if ( strncmp(&serialport.send_buffer[151], "CONNECTED", 9) == 0)
+				{
+						//printf("status: still connect!\n");
+						//std::cout<<std::endl;
+						serialport.blueteeth_connect_status = true;
+						goto LABEL_THREAD_SLEEP;
+						
+				}
+				else if ( strncmp(&serialport.send_buffer[151], "DISCONNECT", 10) == 0)
+				{
+						std::cout<<"status: unconnected!\n"<<std::endl;
+						serialport.blueteeth_connect_status = false;
+				}
+				//clear uart data.
+            	tcflush(serialport.fd, TCIOFLUSH);
+				
+			}
 			
-			strcpy(&serialport.send_buffer[2], unconnect_cmd);
-			
-			//设置超时为10s, 如果10之内没有数据返回，就认为没有数据可读
-			time.tv_sec = 10;
+			//get master role
+			usleep(10000);
+
+			//clear uart data.
+            tcflush(serialport.fd, TCIOFLUSH);
+			time.tv_sec = 1;
 			time.tv_usec = 0;
-			ret = write(serialport.fd, &serialport.send_buffer[2], 2);
-			printf("disc, write ret = %d\n", ret);
-			std::cout<<std::endl;
-			//实现串口异步I/O
+			ret = system("echo 'AT+ROLE?\r' >> /dev/blueteethserial0");
+			/*实现串口异步I/O*/
 			ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
 			//根据返回值来判断串口是否已经有了数据
+			if (ret < 0)
+			{
+				perror("select");
+				continue;
+			}
+			else if ( ret == 0 )
+			{
+				std::cout<<"get role timeout!\n"<<std::endl;
+				continue;
+			}
+			else
+			{
+				printf("......in blueteeth get masterrole......");
+				std::cout<<std::endl;
+				ret = read(serialport.fd, &serialport.send_buffer[161], 1);//只是返回"OK"
+				//print the string
+				printf("ret = %d, %s\n", ret, &serialport.send_buffer[161]);
+				printf("return string is  %s", &serialport.send_buffer[161]);
+				std::cout<<std::endl;
+				
+				if ( strncmp(&serialport.send_buffer[161], "M", 1) == 0)
+				{
+						std::cout<<"it's already masterrole!\n"<<std::endl;
+						goto LABEL_INQ;
+				}
+				//clear uart data.
+            	tcflush(serialport.fd, TCIOFLUSH);
+			}
+
+			
+			//clear uart data.
+            tcflush(serialport.fd, TCIOFLUSH);
+			//set master role
+			time.tv_sec = 5;
+			time.tv_usec = 0;
+			ret = system("echo 'AT+ROLE=M\r' >> /dev/blueteethserial0");
+			/*实现串口异步I/O*/
+			ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+			//根据返回值来判断串口是否已经有了数据
+			if (ret < 0)
+			{
+				perror("select");
+				continue;
+			}
+			else if ( ret == 0 )
+			{
+				std::cout<<"set role timeout!\n"<<std::endl;
+				continue;
+			}
+			else
+			{
+				printf("......in blueteeth set masterrole......");
+				std::cout<<std::endl;
+				ret = read(serialport.fd, &serialport.send_buffer[61], 3);//只是返回"OK"
+				//print the string
+				printf("ret = %d, %s", ret, &serialport.send_buffer[61]);
+				printf("return string is  %s", &serialport.send_buffer[61]);
+				std::cout<<std::endl;
+				
+				if ( strncmp(&serialport.send_buffer[61], "OK", 2) == 0)
+				{
+						std::cout<<"set masterrole successfully!\n"<<std::endl;
+				}
+				else
+				{
+						continue;
+				}
+				//clear uart data.
+            	tcflush(serialport.fd, TCIOFLUSH);
+			}
+
+			LABEL_CLR:
+			//clear uart data.
+            tcflush(serialport.fd, TCIOFLUSH);
+
+			//at first, clear bond status
+			time.tv_sec = 5;
+			time.tv_usec = 0;
+			ret = system("echo 'AT+CLRBOND\r' >> /dev/blueteethserial0");
+			//query the return string
+			ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+			//根据返回值来判断串口是否已经有了数据
+			if (ret < 0)
+			{
+				perror("select");
+				continue;
+			}
+			else if ( ret == 0 )
+			{
+				std::cout<<"unbond slave bluetooth timeout!\n"<<std::endl;
+				continue;
+			}
+			else
+			{        
+				printf("......in blueteeth unbond slave device......");
+				std::cout<<std::endl;
+				ret = read(serialport.fd, &serialport.send_buffer[71], 3);
+				//print the string
+				//printf("ret = %d, %s\n", ret, &serialport.send_buffer[91]);
+				//std::cout<<std::endl;
+				
+				if( strncmp(&serialport.send_buffer[71], "OK", 2) == 0)
+				{
+						std::cout<<"unbond slave bluetooth successfully!\n"<<std::endl;
+				}
+				else
+				{
+						continue;
+				}
+			}		
+
+			LABEL_INQ:
+			//clear uart data.
+            tcflush(serialport.fd, TCIOFLUSH);
+
+			//query slave device
+			time.tv_sec = 10;
+			time.tv_usec = 0;
+			ret = system("echo 'AT+SCAN:RSSI=-99\r' >> /dev/blueteethserial0");
+			//query the return string
+			ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+			//根据返回值来判断串口是否已经有了数据
+			if (ret < 0)
+			{
+				perror("select");
+				continue;
+			}
+			else if ( ret == 0 )
+			{
+				std::cout<<"query slave blue timeout!\n"<<std::endl;
+				continue;
+			}
+			else
+			{        
+				printf("......in blueteeth query slave device......");
+				std::cout<<std::endl;
+				ret = read(serialport.fd, &serialport.send_buffer[91], 30);
+				//print the string
+				//printf("ret = %d, %s\n", ret, &serialport.send_buffer[91]);
+				//std::cout<<std::endl;
+				
+				if ( ret > 21)
+				{
+				   
+			        printf("%s", &serialport.send_buffer[91]);
+			        std::cout<<std::endl;
+					std::cout<<"query slave device successfully, has a slave device!\n"<<std::endl;
+				}
+				else
+				{
+					std::cout<<"query slave blue failed!\n"<<std::endl;
+					query_count++;
+					std::cout<<"query_count = "<<query_count<<std::endl;
+					if(query_count >= 5)
+					{
+						query_count = 0;
+						goto LABEL_CLR;
+					}
+					continue;
+				}
+					
+			}
+			
+			//clear uart data.
+            tcflush(serialport.fd, TCIOFLUSH);
+
+			//connect slave device
+			time.tv_sec = 15;
+			time.tv_usec = 0;
+			char dest[24] = "AT+CONNECT=";
+			char src[12];
+			strncpy(src, &serialport.send_buffer[91+8], 12);
+			strcat(dest, src);
+			dest[23] = '\r';
+			printf("dest = %s\n", dest);
+			std::cout<<std::endl;
+			
+			//ret = system("echo 'AT+CONN1\r' >> /dev/blueteethserial0");
+			//must write the info to uart
+			ret = write(serialport.fd, (unsigned char*)&dest, strlen(dest));
+			//detect the return info
+			ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
 			if (ret < 0)
 			{
 				perror("select");
@@ -327,195 +544,62 @@ void *thread(void *arg)
 			}
 			else
 			{
-				printf("......in blueteeth set disc......");
-				std::cout<<std::endl;
-				ret = read(serialport.fd, &serialport.send_buffer[11], 2);//只是返回"OK"
+				//clear the query count;
+			    query_count = 0;
+				std::cout<<"......in blueteeth connect slave device......"<<std::endl;
+				ret = read(serialport.fd, &serialport.send_buffer[131], 3);
 				//print the string
-				printf("ret = %d, %s\n", ret, &serialport.send_buffer[11]);
+				printf("ret = %d, %s\n", ret, &serialport.send_buffer[131]);
+				printf("return string is  %s", &serialport.send_buffer[131]);
 				std::cout<<std::endl;
 				
-				if ( strncmp(&serialport.send_buffer[11], "OK", 2) == 0)
+				if ( strncmp(&serialport.send_buffer[131], "OK", 2) == 0)
 				{
-						printf("set disc successfully!\n");
-						std::cout<<std::endl;
-				}
-			}
-			
-			while (read(serialport.fd, &serialport.send_buffer[11], 1) == 1 && current_count < 5)
-			{
-				printf("in blueteeth set disc......");
-				std::cout<<std::endl;
-				if (strcmp(&serialport.send_buffer[11], "O") == 0 && already_set_unconnect_ok == false)
-				{
-					continue;
-				}
-				else if (strcmp(&serialport.send_buffer[11], "K") == 0 && already_set_unconnect_ok == true)
-				{
-					printf("succeed in set disc!\n");
-					std::cout<<std::endl;
-					already_set_unconnect_ok = true;
-					current_count = 0;
-					break;
+						serialport.blueteeth_connect_status = true;
+						std::cout<<"connect to the slave device successfully!\n"<<std::endl;
 				}
 				else
 				{
-					already_set_unconnect_ok = false;
-					//如果执行到了这里，就加1
-				    current_count++;
-				    sleep(1);
+						continue;
 				}
+				//clear uart data.
+            	tcflush(serialport.fd, TCIOFLUSH);
 					
 			}
-			
-			
-			//设置模块名字
-			if (already_set_unconnect_ok == true)
-			{
-				char setname_cmd[]= "AT+NAMEIIM_MASTER";
-				strcpy(&serialport.send_buffer[1], setname_cmd);
-				write(serialport.fd, &serialport.send_buffer[1], strlen(setname_cmd));
-				current_count = 0;
-				//延迟一会再读
-			    sleep(1);
-				while (read(serialport.fd, &serialport.send_buffer[11], 1) == 1 && current_count < 5)
-				{
-					if (strcmp(&serialport.send_buffer[11], "O") == 0)
-					{
-						continue;
-					}
-					else if (strcmp(&serialport.send_buffer[11], "K") == 0)
-					{
-						printf("succeed in set name!\n");
-						already_set_name_ok = true;
-						current_count = 0;
-						break;
-					}
-					else
-					{
-						already_set_name_ok = false;
-						//如果执行到了这里，就加1
-						current_count++;
-						sleep(1);
-					}	
-				}
-			}
-			//设置主机模式
-			if (already_set_name_ok == true)
-			{
-				char setname_cmd[]= "AT+ROLE1";
-				strcpy(&serialport.send_buffer[1], setname_cmd);
-				write(serialport.fd, &serialport.send_buffer[1], strlen(setname_cmd));
-				current_count = 0;
-				//延迟一会再读
-				sleep(1);
-				while (read(serialport.fd, &serialport.send_buffer[11], 1) == 1 && current_count < 5)
-				{
-					if (strcmp(&serialport.send_buffer[11], "O") == 0)
-					{
-						continue;
-					}
-					else if (strcmp(&serialport.send_buffer[11], "K") == 0)
-					{
-						printf("succeed in set role master!\n");
-						already_set_master_ok = true;
-						current_count = 0;
-						break;
-					}
-					else
-					{
-						already_set_master_ok = false;
-						//如果执行到了这里，就加1
-						current_count++;
-						sleep(1);
-					}		
-				}
-			}
-			//查询
-			if (already_set_master_ok == true)
-			{
-				char setname_cmd[]= "AT+INQ";
-				strcpy(&serialport.send_buffer[1], setname_cmd);
-				write(serialport.fd, &serialport.send_buffer[1], strlen(setname_cmd));
-				current_count = 0;
-				//延迟一会再读
-				sleep(1);
+		}
+		
+		LABEL_THREAD_SLEEP:
+		//进入休眠
+		pthread_mutex_lock(&mutex);
+		pthread_cond_wait(&cond, &mutex);
+		//do something or not
+		std::cout<<"start reconnect to the slave device!\n"<<std::endl;
+		pthread_mutex_unlock(&mutex);
+		goto LABEL_INQ;
 				
-				while(current_count < 5)
-				{
-					if (read(serialport.fd, &serialport.send_buffer[11], 1) == 1)
-					{
-						printf("succeed in set inq!\n");
-						already_set_searchdev_ok = true;
-						current_count = 0;
-						break;
-					}
-					else if (current_count < 10)
-					{
-						already_set_searchdev_ok = false;
-						current_count++;
-						sleep(1);
-					}	
-				}
-				
-			}
-			//连接设备
-			int count = 0;
-			if (already_set_searchdev_ok == true && count < 3)
-			{
-				char setname_cmd[]= "AT+CONN1";
-				strcpy(&serialport.send_buffer[1], setname_cmd);
-				write(serialport.fd, &serialport.send_buffer[1], strlen(setname_cmd));
-				current_count = 0;
-				//延迟一会再读
-				sleep(1);
-				
-				while (read(serialport.fd, &serialport.send_buffer[11], 1) == 1 && current_count < 5)
-				{
-					if (strcmp(&serialport.send_buffer[11], "+") == 0)
-					{
-						continue;
-					}
-					else if (strcmp(&serialport.send_buffer[11], "C") == 0)
-					{
-						printf("succeed in set connet!\n");
-						serialport.blueteeth_connect_status = true;
-						current_count = 0;
-						break;
-					}
-					else
-					{
-						serialport.blueteeth_connect_status = false;
-						current_count++;
-						sleep(1);
-					}
-						
-				}
-				if (serialport.blueteeth_connect_status == false)
-				{
-					count++;
-				}
-			}
-		}		
 	}
-	printf("outside while recycle!\n");
-	//关闭文件
-	close(serialport.fd);
-		     
-    return ((void *)0);  
-}
-*/  
+	//clear uart data.
+    tcflush(serialport.fd, TCIOFLUSH);
+	std::cout<<"wrong! outside while recycle!\n"<<std::endl;	     
+
+	return ((void *)0);
+	
+}  
 
 int main(int argc, char **argv)
 {
   
 	ros::init(argc, argv, "master_bluetooth_five");
 	ros::NodeHandle n;
+	//线程相关参数初始化
+	pthread_mutex_init(&mutex, NULL);
+	pthread_cond_init(&cond, NULL);
 	
 	serialport.already_open_flag = false;
 	serialport.fd = -1;
 	serialport.send_buffer[100] = {0};
 	serialport.send_buffer[0] = -1;
-	serialport.blueteeth_connect_status = true;
+	serialport.blueteeth_connect_status = false;
 	
 	//serialport initialize
 	//need have a special device name according the ID
@@ -531,35 +615,29 @@ int main(int argc, char **argv)
 	}  
 	//set the parameters of serialport  
 	serialport.Set_Speed(serialport.fd, 115200);
-	if (serialport.Set_Parity(serialport.fd, 8, 1, 'S') == true)  
+	if (serialport.Set_Parity(serialport.fd, 8, 1, 'N') == true)  
 	{  
-		//printf("Set Parity Error\n");  
-		//exit (0);
 		printf("set data format succesfully!\n");  
 	}
 	else
 	{
 		printf("set data format failed!\n");
-		exit(-1);
+        exit(-1);
 	}
-	
-	/*
-	//将文件描述符加入读描述符集合
+	//wait for bluetooth's pair
+	sleep(2);
+	/*将文件描述符加入读描述符集合*/
 	FD_ZERO(&rfds);
 	FD_SET(serialport.fd, &rfds);
 	// create a thread to check whether the blueteeth is connected ok.
 	printf("create new thread!\n");  
-	pthread_t ntid;  
+	pthread_t ntid;
+	
     if( pthread_create(&ntid, NULL, thread, NULL) != 0)  
     {  
         printf("can't create thread for deal with the blueteeth !\n");  
         return -1;  
     }
-    */
-    
-    //等待蓝牙连接成功
-    //this is a temp program.
-    //sleep(5);
     //callback function
 	ros::Subscriber sub = n.subscribe("/door_enabler", 5, MessageCallBack);
 	
@@ -571,7 +649,9 @@ int main(int argc, char **argv)
 
 		loop_rate.sleep();
 	}
+	
 	close(serialport.fd);
 
 	return 0;
 }
+
