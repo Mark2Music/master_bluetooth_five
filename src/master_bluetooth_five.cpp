@@ -198,7 +198,7 @@ void SerialPort::Set_Speed(int fd, int speed)
 
 void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 {
-	std::cout<<"this is a test!!!"<<std::endl;
+	//std::cout<<"this is a test!!!"<<std::endl;
 	int ret = -1;
 	struct timeval time;
 	if (serialport.blueteeth_connect_status == true)
