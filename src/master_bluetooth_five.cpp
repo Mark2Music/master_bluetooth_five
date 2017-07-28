@@ -238,7 +238,7 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 	{
 		usleep(10000);
 		tcflush(serialport.fd, TCIOFLUSH);
-	    time.tv_sec = 0;
+	    	time.tv_sec = 0;
 		time.tv_usec = 80000; //100ms, because the callback hz is 10
 		//ret = system("echo 'AT+STATE?\r' >> /dev/blueteethserial0");
 		ret = write(serialport.fd, "AT+STATE?\r", 10);
