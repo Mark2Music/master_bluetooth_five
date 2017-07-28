@@ -234,7 +234,7 @@ void MessageCallBack(const std_msgs::Int16& toggle_msg) // 5hz
 		}
 
 		//每次完成开门动作之后，检测蓝牙是否还处于连接状态
-	if (serialport.count == 0)
+	if (serialport.count == 0 && serialport.blueteeth_connect_status == true)
 	{
 		usleep(10000);
 		tcflush(serialport.fd, TCIOFLUSH);
