@@ -627,11 +627,55 @@ int main(int argc, char **argv)
 		printf("set data format failed!\n");
         exit(-1);
 	}
-	//wait for bluetooth's pair
-	sleep(2);
-	/*将文件描述符加入读描述符集合*/
+	//check the bluetooth's pair
+	//sleep(2);
+	
+	//将文件描述符加入读描述符集合
 	FD_ZERO(&rfds);
 	FD_SET(serialport.fd, &rfds);
+	tcflush(serialport.fd, TCIOFLUSH);
+        //query bluetooth status
+	struct timeval time;
+        time.tv_sec = 2;
+        time.tv_usec = 0;
+        int ret = write(serialport.fd, "AT+STATE?\r", 10);
+        //实现串口异步I/O
+        ret = select(serialport.fd+1, &rfds, NULL, NULL, &time);
+        //根据返回值来判断串口是否已经有了数据
+        if (ret < 0)
+        {
+            perror("select");
+        }
+        else if ( ret == 0 )
+        {
+            std::cout<<"in main function, query connect status timeout!"<<std::endl;
+        }
+        else
+		{
+				printf("......in main function, blueteeth query connect status......");
+				std::cout<<std::endl;
+				ret = read(serialport.fd, &serialport.send_buffer[151], 9);
+				//print the string
+				printf("ret = %d, %s\n", ret, &serialport.send_buffer[151]);
+				std::cout<<std::endl;
+
+				if ( strncmp(&serialport.send_buffer[151], "CONNECTED", 9) == 0)
+				{
+								//printf("status: still connect!\n");
+								//std::cout<<std::endl;
+								serialport.blueteeth_connect_status = true;
+
+				}
+				else if ( strncmp(&serialport.send_buffer[151], "DISCONNEC", 9) == 0)
+				{
+								std::cout<<"status: unconnected!\n"<<std::endl;
+								serialport.blueteeth_connect_status = false;
+				}
+				//clear uart data.
+                tcflush(serialport.fd, TCIOFLUSH);
+
+		}
+	
 	// create a thread to check whether the blueteeth is connected ok.
 	printf("create new thread!\n");  
 	pthread_t ntid;
